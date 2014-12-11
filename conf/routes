@@ -1,0 +1,33 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+# Home page
+
+GET			/services					 				controllers.Application.services()
+
+GET			/:service									controllers.Application.reconcile(service:String,query:Option[String],queries:Option[String],callback : Option[String])
+POST 		/:service									controllers.Application.reconcile(service:String,query:Option[String],queries:Option[String],callback : Option[String])
+
+GET 		/:service/suggest/type						controllers.Application.suggestType(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+POST 		/:service/suggest/type						controllers.Application.suggestType(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+GET 		/:service/suggest/type/flyout				controllers.Application.typeFlyout(service:String,url:Option[String],callback:Option[String])
+POST 		/:service/suggest/type/flyout				controllers.Application.typeFlyout(service:String,url:Option[String],callback:Option[String])
+
+GET		 	/:service/suggest/property					controllers.Application.suggestProperty(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+POST	 	/:service/suggest/property					controllers.Application.suggestProperty(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+GET 		/:service/suggest/property/flyout			controllers.Application.propertyFlyout(service:String,url:Option[String],callback:Option[String])
+POST 		/:service/suggest/property/flyout			controllers.Application.propertyFlyout(service:String,url:Option[String],callback:Option[String])
+
+GET			/:service/suggest/entity					controllers.Application.suggestEntity(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+POST		/:service/suggest/entity					controllers.Application.suggestEntity(service:String,prefix:Option[String],type_strict:String ?= "any",limit:Option[Int],start:Int ?= 0,callback:Option[String])
+GET 		/:service/suggest/entity/flyout				controllers.Application.entityFlyout(service:String,url:Option[String],callback:Option[String])
+POST 		/:service/suggest/entity/flyout				controllers.Application.entityFlyout(service:String,url:Option[String],callback:Option[String])
+
+GET		    /:service/configuration						controllers.Application.configuration(service:String)
+PUT			/:service									controllers.Application.configure(service:String)
+DELETE		/:service									controllers.Application.delete(service:String)
+
+# CORS support
+OPTIONS        /*all                                	controllers.Application.preflight(all: String)
+
