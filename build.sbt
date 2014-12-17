@@ -1,4 +1,4 @@
-name := """reconciliator"""
+name := """arpa"""
 
 version := "1.0-SNAPSHOT"
 
