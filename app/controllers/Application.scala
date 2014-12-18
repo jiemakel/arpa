@@ -26,77 +26,14 @@ object Application extends Controller {
   case class SPARQLReconcileEndpoint(id:String,
     val name : String,
     val endpointURL : String,
-    val reconcileQuery : String,
-    val suggestTypeQuery : String,
-    val suggestPropertyQuery : String,
-    val suggestEntityQuery : String,
-    val typeFilter : String,
-    val propertyFilter : String,
-  
-    val entityViewURL : String,
-  
-    val entityPreviewURL : String,
-    val entityPreviewHeight : Int,
-    val entityPreviewWidth : Int,
-  
-    val typeFlyoutURL : String,
-    val typeFlyoutHeight : Int,
-    val typeFlyoutWidth : Int,
-    
-    val propertyFlyoutURL : String,
-    val propertyFlyoutHeight : Int,
-    val propertyFlyoutWidth : Int,
-    
-    val entityFlyoutURL : String,
-    val entityFlyoutHeight : Int,
-    val entityFlyoutWidth : Int,
-    
-    val matchThreshold : Double) {
-         
-    val serviceURL = servicePrefix+id
-  
-    def writeMetadata() : JsValue = Json.obj(
-        "name" -> name,
-        "schemaSpace" -> "http://www.ietf.org/rfc/rfc3986",
-        "identifierSpace" -> "http://www.ietf.org/rfc/rfc3986",
-        "view" -> Json.toJson(Map("url"->entityViewURL)),
-        "preview" -> Json.toJson(Map("url"->JsString(entityPreviewURL),"height"->JsNumber(entityPreviewHeight),"width"->JsNumber(entityPreviewWidth))),
-        "suggest" -> Json.toJson(Map(
-            "type"->Json.toJson(Map(
-                "service_url"->serviceURL,
-                "service_path"->"/suggest/type",
-                "flyout_service_url"->serviceURL,
-                "flyout_service_path"->"/suggest/type/flyout?url=${id}")),
-            "property"->Json.toJson(Map(
-                "service_url"->serviceURL,
-                "service_path"->"/suggest/property",
-                "flyout_service_url"->serviceURL,
-                "flyout_service_path"->"/suggest/property/flyout?url=${id}")),
-            "entity"->Json.toJson(Map(
-                "service_url"->serviceURL,
-                "service_path"->"/suggest/entity",
-                "flyout_service_url"->serviceURL,
-                "flyout_service_path"->"/suggest/entity/flyout?url=${id}"))
-         ))
-      )
-    
+    val useLas : Boolean,
+    val lasLocale : String,
+    val lasTransforms : String,
+    val query : String) {
     def writeConfiguration() : JsValue = Json.obj(
         "name" -> name,
         "endpointURL" -> endpointURL,
-        "reconcileQuery" -> reconcileQuery,
-        "suggestTypeQuery" -> suggestTypeQuery,
-        "suggestPropertyQuery" -> suggestPropertyQuery,
-        "suggestEntityQuery" -> suggestEntityQuery,
-        "typeFilter" -> typeFilter,
-        "propertyFilter" -> propertyFilter,
-        "entityViewURL" -> entityViewURL,
-        "entityPreviewURL" -> entityPreviewURL,
-        "entityPreviewHeight" -> entityPreviewHeight,
-        "entityPreviewWidth" -> entityPreviewWidth,
-        "typeFlyoutURL" -> typeFlyoutURL,
-        "propertyFlyoutURL" -> propertyFlyoutURL,
-        "entityFlyoutURL" -> entityFlyoutURL,
-        "matchThreshold" -> matchThreshold)    
+        "query" -> query)
   }
 
   val serviceMap = new HashMap[String,SPARQLReconcileEndpoint]
