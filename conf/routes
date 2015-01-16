@@ -4,12 +4,11 @@
 
 # Home page
 
-GET			/services					 				controllers.Application.services()
+GET			/					 						controllers.Application.services()
 
-GET			/:service									controllers.Application.extract(service:String,query:Option[String])
-POST 		/:service									controllers.Application.extract(service:String,query:Option[String])
+GET			/:service									controllers.Application.dispatch(service:String,text:Option[String],query:Option[String],locale:Option[String])
+POST 		/:service									controllers.Application.extract(service:String,text:String,query:Option[String],locale:Option[String])
 
-GET		    /:service/configuration						controllers.Application.configuration(service:String)
 PUT			/:service									controllers.Application.configure(service:String)
 DELETE		/:service									controllers.Application.delete(service:String)
 
