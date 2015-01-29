@@ -1,5 +1,6 @@
 package controllers
 
+import scala.collection.JavaConversions._
 import play.api._
 import play.api.mvc._
 import play.api.libs.json._
@@ -23,6 +24,7 @@ import play.api.libs.ws._
 import play.api.libs.ws.ning.NingAsyncHttpClientConfigBuilder
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
+import java.util.regex.Pattern
 
 object Application extends Controller {
 
@@ -85,18 +87,17 @@ object Application extends Controller {
   }
 
   def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String]) = {
-    if (text.isDefined) extract(service, text.get, query, locale)
+    if (text.isDefined) extract(service, text, query, locale)
     else configuration(service)
   }
 
-  class Analysis(val original: String) {
-    var completelyBaseformed: Option[String] = None
-    var lastPartBaseformed: Option[String] = None
-    var completelyInflected: Option[String] = None
+  case class Analysis(var original: String,var completelyBaseformed: Option[String] = None,
+    var lastPartBaseformed: Option[String] = None,
+    var completelyInflected: Option[String] = None,
     var lastPartInflected: Option[String] = None
-  }
+  )
 
-  def extract(service: String, text: String, query: Option[String], locale: Option[String]) = Action.async { implicit request =>
+  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
     else {
@@ -104,15 +105,17 @@ object Application extends Controller {
       val formBody = request.body.asFormUrlEncoded;
       var query2 = query
       var locale2 = locale
+      var text2 = text
       formBody.foreach { data =>
         query2 = data.get("query").map(_(0)).orElse(query)
         locale2 = data.get("locale").map(_(0)).orElse(locale)
+        text2 = data.get("text").map(_(0)).orElse(locale)
       }
       val locale3 = locale.orElse(service3.lasLocale)
-      val originalWords = text.split(' ').toSeq
+      val originalWords = text2.get.split("\\s+").filter(!_.isEmpty).toSeq
       val transformedWordsFuture = if (service3.isSimple) Future.successful(originalWords.map(new Analysis(_)))
-      else analyzeWS.post(Map("text" -> Seq(text), "locale" -> locale3.toSeq)).flatMap { r1 =>
-        var wordsAndAnalyses = r1.json.as[Seq[JsObject]].map { o => ((o \ "analysis").as[Seq[JsObject]].apply(0)) }.zipWithIndex.map { case (a, i) => (originalWords(i), a) }
+      else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq)).flatMap { r1 =>
+        var wordsAndAnalyses = r1.json.as[Seq[JsObject]].map { o => ((o \ "word").as[String],((o \ "analysis").as[Seq[JsObject]].apply(0))) }.toMap
         if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined)
           wordsAndAnalyses = wordsAndAnalyses.filter {
             case (originalWord, wordAnalysis) =>
@@ -124,9 +127,9 @@ object Application extends Controller {
                   vals.exists(v => pfilters.isEmpty || pfilters.exists(v.startsWith(_))) && vals.forall(v => !nfilters.exists(v.startsWith(_)))
               }
           }
-        val analyses = wordsAndAnalyses.map {
-          case (originalWord, wordAnalysis) =>
+        val analyses = originalWords.filter(wordsAndAnalyses.contains(_)).map { originalWord =>
             val ret = new Analysis(originalWord)
+            val wordAnalysis = wordsAndAnalyses(originalWord)
             val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
             if (service3.queryModifyingEveryPart)
               ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
@@ -136,25 +139,26 @@ object Application extends Controller {
         }
         if (service3.queryUsingInflections.isEmpty) Future.successful(analyses)
         else {
-          val wordsToInflect = wordsAndAnalyses.flatMap { case (originalWord, wordAnalysis) => (wordAnalysis \ "wordParts").as[Seq[JsObject]].map(o => (o \ "lemma").as[String]) }
-          for (r2 <- inflectWS.post(Map("text" -> Seq(wordsToInflect.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections.toSeq))) yield {
+          val wordsToInflect = wordsAndAnalyses.view.toSeq.flatMap { case (originalWord, wordAnalysis) => (wordAnalysis \ "wordParts").as[Seq[JsObject]].map(o => (o \ "lemma").as[String]) }
+          for (r2 <- inflectWS.post(Map("text" -> Seq(wordsToInflect.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections))) yield {
             val ifmap = (if (locale3.isDefined) (r2.json) else (r2.json \ "inflection")).as[String].split(' ').zipWithIndex.map {
               case (inflectedForm, index) =>
                 (wordsToInflect(index), inflectedForm)
             }.toMap
-            wordsAndAnalyses.zipWithIndex.foreach {
-              case ((originalWord, wordAnalysis), index) =>
-                val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
+            analyses.foreach { analysis =>
+                val wordParts = (wordsAndAnalyses(analysis.original) \ "wordParts").as[Seq[JsObject]]
                 if (service3.queryModifyingEveryPart)
-                  analyses(index).completelyInflected = Some(wordParts.map(o => (o \ "lemma").as[String]).map(ifmap(_)).mkString)
+                  analysis.completelyInflected = Some(wordParts.map(o => (o \ "lemma").as[String]).map(ifmap(_)).mkString)
                 if (service3.queryModifyingOnlyLastPart)
-                  analyses(index).lastPartInflected = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "")).mkString) :+ (ifmap((wordParts.last \ "lemma").as[String]))).mkString)
+                  analysis.lastPartInflected = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "")).mkString) :+ (ifmap((wordParts.last \ "lemma").as[String]))).mkString)
             }
             analyses
           }
         }
       }
+      
       transformedWordsFuture.map { words =>
+      
         val ngrams = new HashSet[String]
         val ngramOriginalMap = new HashMap[String, HashSet[String]]
         var lastInflected: Seq[String] = Seq.empty
@@ -200,24 +204,22 @@ object Application extends Controller {
         query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
         try {
           val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
-          val rmap = new HashMap[String, Buffer[(String, String)]]
+          val rmap = new HashMap[String, (String,HashSet[String],HashMap[String,Buffer[String]])]
           while (resultSet.hasNext()) {
             val solution = resultSet.nextSolution
             val id = solution.getResource("id").getURI
-            val label = solution.getLiteral("label").getString
-            val ngram = solution.getLiteral("ngram").getString
-            rmap.getOrElseUpdate(id, new ArrayBuffer[(String, String)]) += ((label, ngram))
+            val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (solution.getLiteral("label").getString,new HashSet[String],new HashMap[String,Buffer[String]]))
+            for (v <- solution.varNames)
+              properties.getOrElseUpdate(v, new ArrayBuffer[String]) += FmtUtils.stringForRDFNode(solution.get(v))
+            ngrams += solution.getLiteral("ngram").getString
           }
-          val ret = for ((id, vals) <- rmap) yield {
-            val matches = new ArrayBuffer[(String, Int, Double)]
+          val ret = for ((id, (label,ngrams,properties)) <- rmap) yield {
+            val matches = new ArrayBuffer[String]
             for (
-              (label, ngram) <- vals;
+              ngram <- ngrams;
               ongram <- ngramOriginalMap(ngram)
-            ) {
-              val p = ("\\b" + ongram + "\\b").r
-              for (m <- p.findAllMatchIn(text)) matches += ((ongram, text.substring(0, m.start).count(_ == ' '), 1.0))
-            }
-            ExtractionResult(id, vals(0)._1, matches)
+            ) matches += ongram
+            ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
           }
           Ok(Json.toJson(ret))
         } catch {
@@ -237,13 +239,15 @@ object Application extends Controller {
   case class ExtractionResult(
     var id: String,
     var label: String,
-    var matches: Seq[(String, Int, Double)])
+    var matches: Seq[String],
+    var properties: Map[String,Seq[String]])
   implicit val ExtractionResultWrites = new Writes[ExtractionResult] {
     def writes(r: ExtractionResult): JsValue = {
       Json.obj(
         "id" -> r.id,
         "label" -> r.label,
-        "matches" -> r.matches.map { case (text, pos, score) => Json.obj("text" -> text, "pos" -> pos, "score" -> score) })
+        "matches" -> r.matches,
+        "properties" -> r.properties)
     }
   }
 
