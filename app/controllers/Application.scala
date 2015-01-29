@@ -111,11 +111,16 @@ object Application extends Controller {
         locale2 = data.get("locale").map(_(0)).orElse(locale)
         text2 = data.get("text").map(_(0)).orElse(locale)
       }
-      val locale3 = locale.orElse(service3.lasLocale)
+      var locale3 = locale.orElse(service3.lasLocale)
       val originalWords = text2.get.split("\\s+").filter(!_.isEmpty).toSeq
-      val transformedWordsFuture = if (service3.isSimple) Future.successful(originalWords.map(new Analysis(_)))
+      val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(originalWords.map(new Analysis(_)))
       else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq)).flatMap { r1 =>
-        var wordsAndAnalyses = r1.json.as[Seq[JsObject]].map { o => ((o \ "word").as[String],((o \ "analysis").as[Seq[JsObject]].apply(0))) }.toMap
+        val a = if (locale3.isDefined) r1.json
+        else {
+          locale3 = Some((r1.json \ "locale").as[String])  
+          r1.json \ "analysis"
+        }
+        var wordsAndAnalyses = a.as[Seq[JsObject]].map { o => ((o \ "word").as[String],((o \ "analysis").as[Seq[JsObject]].apply(0))) }.toMap
         if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined)
           wordsAndAnalyses = wordsAndAnalyses.filter {
             case (originalWord, wordAnalysis) =>
@@ -200,7 +205,7 @@ object Application extends Controller {
             }
           }
         }
-        var queryString = service3.query.replaceAll("<VALUES>", ngrams.mkString(" "))
+        var queryString = service3.query.replaceAll("<VALUES>", ngrams.mkString(" ")).replaceAll("<LANG>",'"'+locale3.get+'"')
         query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
         try {
           val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
@@ -221,7 +226,7 @@ object Application extends Controller {
             ) matches += ongram
             ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
           }
-          Ok(Json.toJson(ret))
+          Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
         } catch {
           case e: QueryParseException => throw new IllegalArgumentException(e.getMessage + " parsing " + queryString, e)
         }
