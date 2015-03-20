@@ -31,7 +31,6 @@ object Application extends Controller {
   val servicePrefix = new SystemProperties().getOrElse("service.prefix", "http://localhost:9000/")
 
   val analyzeWS = WS.url(new SystemProperties().getOrElse("analyze.address", "http://demo.seco.tkk.fi/las/analyze"))
-  val inflectWS = WS.url(new SystemProperties().getOrElse("inflect.address", "http://demo.seco.tkk.fi/las/inflect"))
 
   case class Extractor(id: String,
                        val name: String,
@@ -109,12 +108,11 @@ object Application extends Controller {
       formBody.foreach { data =>
         query2 = data.get("query").map(_(0)).orElse(query)
         locale2 = data.get("locale").map(_(0)).orElse(locale)
-        text2 = data.get("text").map(_(0)).orElse(locale)
+        text2 = data.get("text").map(_(0)).orElse(text)
       }
       var locale3 = locale.orElse(service3.lasLocale)
-      val originalWords = text2.get.split("\\s+").filter(!_.isEmpty).toSeq
-      val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(originalWords.map(new Analysis(_)))
-      else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq)).flatMap { r1 =>
+      val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(text2.get.split("\\s+").filter(!_.isEmpty).toSeq.map(new Analysis(_)))
+      else analyzeWS.post(Map("text" -> Seq(text2.get), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections)).flatMap { r1 =>
         val a = if (locale3.isDefined) r1.json
         else {
           locale3 = Some((r1.json \ "locale").as[String])  
@@ -132,34 +130,25 @@ object Application extends Controller {
                   vals.exists(v => pfilters.isEmpty || pfilters.exists(v.startsWith(_))) && vals.forall(v => !nfilters.exists(v.startsWith(_)))
               }
           }
-        val analyses = originalWords.filter(wordsAndAnalyses.contains(_)).map { originalWord =>
+        val analyses = wordsAndAnalyses.map { case (originalWord,wordAnalysis) =>
             val ret = new Analysis(originalWord)
-            val wordAnalysis = wordsAndAnalyses(originalWord)
             val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
             if (service3.queryModifyingEveryPart)
               ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
             if (service3.queryModifyingOnlyLastPart)
-              ret.lastPartBaseformed = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "")).mkString) :+ ((wordParts.last \ "lemma").as[String])).mkString)
+              ret.lastPartBaseformed = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString) :+ ((wordParts.last \ "lemma").as[String])).mkString)
+            if (service3.queryModifyingEveryPart)
+              ret.completelyInflected = Some(wordParts.map{o => 
+                  val inf = (o \\ "INFLECTED").map(_.as[Seq[String]]).flatten
+                  if (!inf.isEmpty) inf(0) else (o \ "lemma").as[String]}.mkString)
+            if (service3.queryModifyingOnlyLastPart)
+              ret.lastPartInflected = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString) :+ ({
+                val inf = (wordParts.last \\ "INFLECTED").map(_.as[Seq[String]]).flatten
+                if (!inf.isEmpty) inf(0) else (wordParts.last \ "lemma").as[String]
+              })).mkString)
             ret
         }
-        if (service3.queryUsingInflections.isEmpty) Future.successful(analyses)
-        else {
-          val wordsToInflect = wordsAndAnalyses.view.toSeq.flatMap { case (originalWord, wordAnalysis) => (wordAnalysis \ "wordParts").as[Seq[JsObject]].map(o => (o \ "lemma").as[String]) }
-          for (r2 <- inflectWS.post(Map("text" -> Seq(wordsToInflect.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections))) yield {
-            val ifmap = (if (locale3.isDefined) (r2.json) else (r2.json \ "inflection")).as[String].split(' ').zipWithIndex.map {
-              case (inflectedForm, index) =>
-                (wordsToInflect(index), inflectedForm)
-            }.toMap
-            analyses.foreach { analysis =>
-                val wordParts = (wordsAndAnalyses(analysis.original) \ "wordParts").as[Seq[JsObject]]
-                if (service3.queryModifyingEveryPart)
-                  analysis.completelyInflected = Some(wordParts.map(o => (o \ "lemma").as[String]).map(ifmap(_)).mkString)
-                if (service3.queryModifyingOnlyLastPart)
-                  analysis.lastPartInflected = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "")).mkString) :+ (ifmap((wordParts.last \ "lemma").as[String]))).mkString)
-            }
-            analyses
-          }
-        }
+        Future.successful(analyses)
       }
       
       transformedWordsFuture.map { words =>
