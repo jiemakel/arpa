@@ -28,7 +28,7 @@ import java.util.regex.Pattern
 
 object Application extends Controller {
 
-  val servicePrefix = new SystemProperties().getOrElse("service.prefix", "http://localhost:9000/")
+  val servicePrefix = new SystemProperties().getOrElse("service.prefix", "http://demo.seco.tkk.fi/arpa/")
 
   val analyzeWS = WS.url(new SystemProperties().getOrElse("analyze.address", "http://demo.seco.tkk.fi/las/analyze"))
 
@@ -112,7 +112,7 @@ object Application extends Controller {
       }
       var locale3 = locale.orElse(service3.lasLocale)
       val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(text2.get.split("\\s+").filter(!_.isEmpty).toSeq.map(new Analysis(_)))
-      else analyzeWS.post(Map("text" -> Seq(text2.get), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections)).flatMap { r1 =>
+      else analyzeWS.post(Map("text" -> Seq(text2.get.split("\\s+").filter(!_.isEmpty).toSet.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("0"))).flatMap { r1 =>
         val a = if (locale3.isDefined) r1.json
         else {
           locale3 = Some((r1.json \ "locale").as[String])  
@@ -194,15 +194,15 @@ object Application extends Controller {
             }
           }
         }
-        var queryString = service3.query.replaceAll("<VALUES>", ngrams.mkString(" ")).replaceAll("<LANG>",'"'+locale3.get+'"')
+        var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
         query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
         try {
           val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
-          val rmap = new HashMap[String, (String,HashSet[String],HashMap[String,Buffer[String]])]
+          val rmap = new HashMap[String, (Option[String],HashSet[String],HashMap[String,Buffer[String]])]
           while (resultSet.hasNext()) {
             val solution = resultSet.nextSolution
             val id = solution.getResource("id").getURI
-            val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (solution.getLiteral("label").getString,new HashSet[String],new HashMap[String,Buffer[String]]))
+            val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (Option(solution.getLiteral("label")).map(_.getString),new HashSet[String],new HashMap[String,Buffer[String]]))
             for (v <- solution.varNames)
               properties.getOrElseUpdate(v, new ArrayBuffer[String]) += FmtUtils.stringForRDFNode(solution.get(v))
             ngrams += solution.getLiteral("ngram").getString
@@ -232,7 +232,7 @@ object Application extends Controller {
 
   case class ExtractionResult(
     var id: String,
-    var label: String,
+    var label: Option[String],
     var matches: Seq[String],
     var properties: Map[String,Seq[String]])
   implicit val ExtractionResultWrites = new Writes[ExtractionResult] {
