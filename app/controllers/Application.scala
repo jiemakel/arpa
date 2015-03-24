@@ -111,8 +111,9 @@ object Application extends Controller {
         text2 = data.get("text").map(_(0)).orElse(text)
       }
       var locale3 = locale.orElse(service3.lasLocale)
-      val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(text2.get.split("\\s+").filter(!_.isEmpty).toSeq.map(new Analysis(_)))
-      else analyzeWS.post(Map("text" -> Seq(text2.get.split("\\s+").filter(!_.isEmpty).toSet.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("0"))).flatMap { r1 =>
+      val originalWords = text2.get.split("[\\p{C}\\p{P}\\p{Z}\\p{S}]+").filter(!_.isEmpty).toSeq
+      val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(originalWords.map(new Analysis(_)))
+      else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("0"))).flatMap { r1 =>
         val a = if (locale3.isDefined) r1.json
         else {
           locale3 = Some((r1.json \ "locale").as[String])  
@@ -130,8 +131,9 @@ object Application extends Controller {
                   vals.exists(v => pfilters.isEmpty || pfilters.exists(v.startsWith(_))) && vals.forall(v => !nfilters.exists(v.startsWith(_)))
               }
           }
-        val analyses = wordsAndAnalyses.map { case (originalWord,wordAnalysis) =>
+        val analyses = originalWords.filter(wordsAndAnalyses.contains(_)).map { originalWord =>
             val ret = new Analysis(originalWord)
+            val wordAnalysis = wordsAndAnalyses(originalWord)
             val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
             if (service3.queryModifyingEveryPart)
               ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
