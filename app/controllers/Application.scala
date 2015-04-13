@@ -41,6 +41,7 @@ object Application extends Controller {
                        val queryUsingInflections: Seq[String],
                        val queryModifyingEveryPart: Boolean,
                        val queryModifyingOnlyLastPart: Boolean,
+                       val queryUsingAllPermutations: Boolean,
                        val negativeLASFilters: Option[Map[String, Set[String]]],
                        val positiveLASFilters: Option[Map[String, Set[String]]],
                        val query: String,
@@ -56,6 +57,7 @@ object Application extends Controller {
       "queryUsingInflections" -> queryUsingInflections,
       "queryModifyingEveryPart" -> queryModifyingEveryPart,
       "queryModifyingOnlyLastPart" -> queryModifyingOnlyLastPart,
+      "queryUsingAllPermutations" -> queryUsingAllPermutations,
       "negativeLASFilters" -> negativeLASFilters,
       "positiveLASFilters" -> positiveLASFilters,
       "query" -> query,
@@ -73,6 +75,7 @@ object Application extends Controller {
     (json \ "queryUsingInflections").asOpt[Seq[String]].getOrElse(Seq.empty).filter(!_.isEmpty),
     (json \ "queryModifyingEveryPart").asOpt[Boolean].getOrElse(false),
     (json \ "queryModifyingOnlyLastPart").asOpt[Boolean].getOrElse(false),
+    (json \ "queryUsingAllPermutations").asOpt[Boolean].getOrElse(false),
     (json \ "lasFilters").asOpt[Map[String, Set[String]]].map(m => m.map { case (k, v) => (k, v.filter(_.startsWith("!")).map(_.substring(1))) }.filter(!_._2.isEmpty)),
     (json \ "lasFilters").asOpt[Map[String, Set[String]]].map(m => m.map { case (k, v) => (k, v.filter(!_.startsWith("!"))) }.filter(!_._2.isEmpty)),
     (json \ "query").asOpt[String].getOrElse(throw new Exception("query")),
@@ -95,6 +98,9 @@ object Application extends Controller {
     var completelyInflected: Option[String] = None,
     var lastPartInflected: Option[String] = None
   )
+  
+  def combine[A](xs: Traversable[A]*): Seq[Seq[A]] =
+     xs.foldLeft(Seq(Seq.empty[A])){ (x, y) => for (a <- x.view; b <- y) yield a :+ b }
 
   def extract(service: String, text: Option[String], query: Option[String], locale: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
@@ -181,19 +187,21 @@ object Application extends Controller {
           }
           word.completelyBaseformed.foreach { word =>
             lastBaseformed = (lastBaseformed :+ word).takeRight(service3.maxNGrams)
-            for (i <- 1 to lastBaseformed.length) {
-              val ngram = lastBaseformed.takeRight(i).mkString(" ")
-              ngrams += FmtUtils.stringForString(ngram)
-              ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += lastOriginal.takeRight(i).mkString(" ")
-            }
+            for (head <- if (service3.queryUsingAllPermutations) combine(lastOriginal,lastBaseformed) else Seq(lastBaseformed)) 
+              for (i <- 1 to head.length) {
+                val ngram = head.takeRight(i).mkString(" ")
+                ngrams += FmtUtils.stringForString(ngram)
+                ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += lastOriginal.takeRight(i).mkString(" ")
+              }
           }
           word.completelyInflected.foreach { word =>
             lastInflected = (lastInflected :+ word).takeRight(service3.maxNGrams)
-            for (i <- 1 to lastInflected.length) {
-              val ngram = lastInflected.takeRight(i).mkString(" ")
-              ngrams += FmtUtils.stringForString(ngram)
-              ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += lastOriginal.takeRight(i).mkString(" ")
-            }
+            for (head <- if (service3.queryUsingAllPermutations) combine(lastOriginal,lastInflected) else Seq(lastInflected)) 
+              for (i <- 1 to head.length) {
+                val ngram = head.takeRight(i).mkString(" ")
+                ngrams += FmtUtils.stringForString(ngram)
+                ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += lastOriginal.takeRight(i).mkString(" ")
+              }
           }
         }
         var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
