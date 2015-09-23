@@ -112,7 +112,7 @@ object Application extends Controller {
         text2 = data.get("text").map(_(0)).orElse(locale)
       }
       var locale3 = locale.orElse(service3.lasLocale)
-      val originalWords = text2.get.split("\\s+").filter(!_.isEmpty).toSeq
+      val originalWords = text2.get.split("\\W+").filter(!_.isEmpty).toSeq
       val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) Future.successful(originalWords.map(new Analysis(_)))
       else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq)).flatMap { r1 =>
         val a = if (locale3.isDefined) r1.json
@@ -209,11 +209,11 @@ object Application extends Controller {
         query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
         try {
           val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
-          val rmap = new HashMap[String, (String,HashSet[String],HashMap[String,Buffer[String]])]
+          val rmap = new HashMap[String, (Option[String],HashSet[String],HashMap[String,Buffer[String]])]
           while (resultSet.hasNext()) {
             val solution = resultSet.nextSolution
             val id = solution.getResource("id").getURI
-            val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (solution.getLiteral("label").getString,new HashSet[String],new HashMap[String,Buffer[String]]))
+            val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (Option(solution.getLiteral("label")).map(_.getString),new HashSet[String],new HashMap[String,Buffer[String]]))
             for (v <- solution.varNames)
               properties.getOrElseUpdate(v, new ArrayBuffer[String]) += FmtUtils.stringForRDFNode(solution.get(v))
             ngrams += solution.getLiteral("ngram").getString
@@ -228,22 +228,18 @@ object Application extends Controller {
           }
           Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
         } catch {
-          case e: QueryParseException => throw new IllegalArgumentException(e.getMessage + " parsing " + queryString, e)
+          case e: QueryParseException => InternalServerError(e.getMessage + " parsing " + queryString)
         }
       }
+    }.recover {
+      case e: Exception => InternalServerError(e.getMessage)
     }
-  }
-
-  implicit def toResponse(res: Either[JsValue, String])(implicit request: Request[AnyContent], callback: Option[String]): Result = {
-    res match {
-      case Left(y)  => Ok(callback.map { _ + "(" + y.toString + ")" }.getOrElse(y.toString()))
-      case Right(y) => BadRequest(y)
-    }
+    
   }
 
   case class ExtractionResult(
     var id: String,
-    var label: String,
+    var label: Option[String],
     var matches: Seq[String],
     var properties: Map[String,Seq[String]])
   implicit val ExtractionResultWrites = new Writes[ExtractionResult] {
