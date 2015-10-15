@@ -90,7 +90,7 @@ object Application extends Controller {
     serviceMap(file.getName()) = buildExtractor(file.getName(), Json.parse(Source.fromFile(file).getLines.mkString))
   }
 
-  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Boolean) = {
+  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String]) = {
     if (text.isDefined) extract(service, text, query, locale, pretty)
     else configuration(service)
   }
@@ -104,7 +104,7 @@ object Application extends Controller {
   def combine[A](a: Seq[A],b: Seq[A]): Seq[Seq[A]] =
     a.zip(b).foldLeft(Seq.empty[Seq[A]]) { (x,s) => if (x.isEmpty) Seq(Seq(s._1),Seq(s._2)) else (for (a<-x) yield Seq(a:+s._1,a:+s._2)).flatten }
 
-  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Boolean) = Action.async { implicit request =>
+  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
     else {
@@ -253,7 +253,8 @@ object Application extends Controller {
               ) matches += ongram
               ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
             }
-            if (pretty)
+            
+            if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
               Ok(Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
             else
               Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
