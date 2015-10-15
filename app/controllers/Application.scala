@@ -298,7 +298,7 @@ object Application extends Controller {
   }
 
   def services() = Action {
-    Ok(Json.toJson(serviceMap.map { case (k, v) => (k, v.name) }.toMap))
+    Ok(Json.prettyPrint(Json.toJson(serviceMap.map { case (k, v) => (k, v.name) }.toMap)))
   }
 
   def configure(service: String) = Action(parse.tolerantText) { request =>
