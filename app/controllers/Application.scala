@@ -27,6 +27,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.regex.Pattern
 import org.hjson.JsonValue
 import org.hjson.Stringify
+import org.apache.jena.atlas.web.HttpException
 
 object Application extends Controller {
 
@@ -259,7 +260,8 @@ object Application extends Controller {
             else
               Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
           } catch {
-            case e: QueryParseException => InternalServerError(e.getMessage + " parsing " + queryString)
+            case e: QueryParseException => InternalServerError(e.getMessage + " parsing query:\n" + queryString)
+            case e: Exception => InternalServerError(e.getMessage + " for query:\n" + queryString)
           }
         }
       }
