@@ -141,7 +141,7 @@ object Application extends Controller {
           aresult = Some(a)
           var wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
             var analysis = (o \ "analysis").as[Seq[JsObject]]
-            var fanalysis = analysis.filter(o => (o \ "BEST_MATCH").as[Option[String]].isDefined)
+            var fanalysis = analysis.filter(o => (o \ "globalTags" \ "BEST_MATCH").as[Option[Seq[String]]].isDefined)
             ((o \ "word").as[String],(if (!fanalysis.isEmpty) fanalysis else analysis).apply(0))
           }.toMap
           if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined)
