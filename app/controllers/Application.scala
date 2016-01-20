@@ -91,8 +91,8 @@ object Application extends Controller {
     serviceMap(file.getName()) = buildExtractor(file.getName(), Json.parse(Source.fromFile(file).getLines.mkString))
   }
 
-  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String]) = {
-    if (text.isDefined) extract(service, text, query, locale, pretty)
+  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String]) = {
+    if (text.isDefined) extract(service, text, query, locale, pretty, debug)
     else configuration(service)
   }
 
@@ -105,7 +105,7 @@ object Application extends Controller {
   def combine[A](a: Seq[A],b: Seq[A]): Seq[Seq[A]] =
     a.zip(b).foldLeft(Seq.empty[Seq[A]]) { (x,s) => if (x.isEmpty) Seq(Seq(s._1),Seq(s._2)) else (for (a<-x) yield Seq(a:+s._1,a:+s._2)).flatten }
 
-  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String]) = Action.async { implicit request =>
+  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
     else {
@@ -129,6 +129,7 @@ object Application extends Controller {
           lm=m.end
           v
         }).filter(!_._1.isEmpty).toSeq
+        var aresult : Option[JsValue] = None
         val originalWords = originalWordsPlusSeparators.map(_._1)
         val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => new Analysis(w._1,w._2)))
         else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("0"))).flatMap { r1 =>
@@ -137,6 +138,7 @@ object Application extends Controller {
             locale3 = Some((r1.json \ "locale").as[String])
             r1.json \ "analysis"
           }
+          aresult = Some(a)
           var wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
             var analysis = (o \ "analysis").as[Seq[JsObject]]
             var fanalysis = analysis.filter(o => (o \ "BEST_MATCH").as[Option[String]].isDefined)
@@ -254,8 +256,9 @@ object Application extends Controller {
               ) matches += ongram
               ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
             }
-            
-            if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
+            if (debug.isDefined && (debug.get=="" || debug.get.toBoolean))
+              Ok("ARPA output:\n"+aresult.map(Json.prettyPrint(_)).getOrElse("not run")+"\nQuery:\n"+queryString+"\nResults:\n"+Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
+            else if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
               Ok(Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
             else
               Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))

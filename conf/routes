@@ -6,8 +6,8 @@
 
 GET			/					 						controllers.Application.services()
 
-GET			/:service									controllers.Application.dispatch(service:String,text:Option[String],query:Option[String],locale:Option[String],pretty:Option[String] ?= None)
-POST 		/:service									controllers.Application.extract(service:String,text:Option[String],query:Option[String],locale:Option[String],pretty:Option[String] ?= None)
+GET			/:service									controllers.Application.dispatch(service:String,text:Option[String],query:Option[String],locale:Option[String],pretty:Option[String] ?= None,debug:Option[String] ?= None)
+POST 		/:service									controllers.Application.extract(service:String,text:Option[String],query:Option[String],locale:Option[String],pretty:Option[String] ?= None,debug:Option[String] ?= None)
 
 PUT			/:service									controllers.Application.configure(service:String)
 DELETE		/:service									controllers.Application.delete(service:String)
