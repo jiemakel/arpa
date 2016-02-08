@@ -132,7 +132,7 @@ object Application extends Controller {
         var aresult : Option[JsValue] = None
         val originalWords = originalWordsPlusSeparators.map(_._1)
         val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => new Analysis(w._1,w._2)))
-        else analyzeWS.post(Map("text" -> Seq(originalWords.toSet.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("0"))).flatMap { r1 =>
+        else analyzeWS.post(Map("text" -> Seq(originalWords.mkString(" ")), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("1"))).flatMap { r1 =>
           val a = if (locale3.isDefined) r1.json
           else {
             locale3 = Some((r1.json \ "locale").as[String])
