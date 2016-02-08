@@ -90,9 +90,9 @@ object Application extends Controller {
   for (file <- servicesDir.listFiles()) {
     serviceMap(file.getName()) = buildExtractor(file.getName(), Json.parse(Source.fromFile(file).getLines.mkString))
   }
-
-  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String]) = {
-    if (text.isDefined) extract(service, text, query, locale, pretty, debug)
+  
+  def dispatch(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String], cgen : Option[String]) = {
+    if (text.isDefined) extract(service, text, query, locale, pretty, debug, cgen)
     else configuration(service)
   }
 
@@ -105,7 +105,7 @@ object Application extends Controller {
   def combine[A](a: Seq[A],b: Seq[A]): Seq[Seq[A]] =
     a.zip(b).foldLeft(Seq.empty[Seq[A]]) { (x,s) => if (x.isEmpty) Seq(Seq(s._1),Seq(s._2)) else (for (a<-x) yield Seq(a:+s._1,a:+s._2)).flatten }
 
-  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String]) = Action.async { implicit request =>
+  def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String], onlyGenerateCandidates: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
     else {
@@ -235,36 +235,43 @@ object Application extends Controller {
             if (word.completelyBaseformed.isDefined) lastBaseformed = (lastBaseformed :+ (word.completelyBaseformed.get+word.whitespace)).takeRight(service3.maxNGrams)
             if (word.completelyInflected.isDefined) lastInflected = (lastInflected :+ (word.completelyInflected.get+word.whitespace)).takeRight(service3.maxNGrams)
           }
-          var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
-          query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
-          try {
-            val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
-            val rmap = new HashMap[String, (Option[String],HashSet[String],HashMap[String,Buffer[String]])]
-            while (resultSet.hasNext()) {
-              val solution = resultSet.nextSolution
-              val id = solution.getResource("id").getURI
-              val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (Option(solution.getLiteral("label")).map(_.getString),new HashSet[String],new HashMap[String,Buffer[String]]))
-              for (v <- solution.varNames)
-                properties.getOrElseUpdate(v, new ArrayBuffer[String]) += FmtUtils.stringForRDFNode(solution.get(v))
-              ngrams += solution.getLiteral("ngram").getString
-            }
-            val ret = for ((id, (label,ngrams,properties)) <- rmap) yield {
-              val matches = new ArrayBuffer[String]
-              for (
-                ngram <- ngrams;
-                ongram <- ngramOriginalMap(ngram)
-              ) matches += ongram
-              ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
-            }
-            if (debug.isDefined && (debug.get=="" || debug.get.toBoolean))
-              Ok("ARPA output:\n"+aresult.map(Json.prettyPrint(_)).getOrElse("not run")+"\nQuery:\n"+queryString+"\nResults:\n"+Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
-            else if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
-              Ok(Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
+          if (onlyGenerateCandidates.isDefined && (onlyGenerateCandidates.get=="" || onlyGenerateCandidates.get.toBoolean)) {
+            if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
+              Ok(Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ngramOriginalMap.toMap.map{case (k,v) => (k,v.toSeq)})))))
             else
-              Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
-          } catch {
-            case e: QueryParseException => InternalServerError(e.getMessage + " parsing query:\n" + queryString)
-            case e: Exception => InternalServerError(e.getMessage + " for query:\n" + queryString)
+              Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ngramOriginalMap.toMap.map{case (k,v) => (k,v.toSeq)}))))
+          } else {
+            var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
+            query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
+            try {
+              val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
+              val rmap = new HashMap[String, (Option[String],HashSet[String],HashMap[String,Buffer[String]])]
+              while (resultSet.hasNext()) {
+                val solution = resultSet.nextSolution
+                val id = solution.getResource("id").getURI
+                val (_,ngrams,properties) = rmap.getOrElseUpdate(id, (Option(solution.getLiteral("label")).map(_.getString),new HashSet[String],new HashMap[String,Buffer[String]]))
+                for (v <- solution.varNames)
+                  properties.getOrElseUpdate(v, new ArrayBuffer[String]) += FmtUtils.stringForRDFNode(solution.get(v))
+                ngrams += solution.getLiteral("ngram").getString
+              }
+              val ret = for ((id, (label,ngrams,properties)) <- rmap) yield {
+                val matches = new ArrayBuffer[String]
+                for (
+                  ngram <- ngrams;
+                  ongram <- ngramOriginalMap(ngram)
+                ) matches += ongram
+                ExtractionResult(id, label, matches,properties.view.toMap.map{case (k,v) => (k,v.toSeq)})
+              }
+              if (debug.isDefined && (debug.get=="" || debug.get.toBoolean))
+                Ok("ARPA output:\n"+aresult.map(Json.prettyPrint(_)).getOrElse("not run")+"\nQuery:\n"+queryString+"\nResults:\n"+Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
+              else if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
+                Ok(Json.prettyPrint(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret)))))
+              else
+                Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ret))))
+            } catch {
+              case e: QueryParseException => InternalServerError(e.getMessage + " parsing query:\n" + queryString)
+              case e: Exception => InternalServerError(e.getMessage + " for query:\n" + queryString)
+            }
           }
         }
       }
