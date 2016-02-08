@@ -11,3 +11,7 @@ libraryDependencies ++= Seq(
     "org.hjson" % "hjson" % "1.1.2",
 	ws
 )
+
+scalacOptions += "-target:jvm-1.7"
+
+javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
