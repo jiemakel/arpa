@@ -49,6 +49,7 @@ object Application extends Controller {
                        val positiveLASFilters: Option[Map[String, Set[String]]],
                        val guess: Boolean,
                        val query: String,
+                       val depth: Int,
                        val maxNGrams: Int) {
     def isSimple: Boolean = !queryUsingBaseform && queryUsingInflections.isEmpty && !negativeLASFilters.isDefined && !positiveLASFilters.isDefined
 
@@ -66,6 +67,7 @@ object Application extends Controller {
       "positiveLASFilters" -> positiveLASFilters,
       "guess" -> guess,
       "query" -> query,
+      "depth" -> depth,
       "maxNGrams" -> maxNGrams)
   }
 
@@ -85,6 +87,7 @@ object Application extends Controller {
     (json \ "positiveLASFilters").asOpt[Map[String, Set[String]]],
     (json \ "guess").asOpt[Boolean].getOrElse(false),
     (json \ "query").asOpt[String].getOrElse(throw new Exception("query")),
+    (json \ "depth").asOpt[Int].getOrElse(1),
     (json \ "maxNGrams").asOpt[Int].getOrElse(throw new Exception("maxNGrams")))
 
   val servicesDir = new File(new SystemProperties().getOrElse("service.directory", "services"))
@@ -136,7 +139,7 @@ object Application extends Controller {
         var aresult : Option[JsValue] = None
         val originalWords = originalWordsPlusSeparators.map(_._1)
         val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => new Analysis(w._1,w._2)))
-        else analyzeWS.post(Map("text" -> Seq(originalWords.mkString(" ")), "guess" -> Seq(service3.guess.toString), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq("1"))).flatMap { r1 =>
+        else analyzeWS.post(Map("text" -> Seq(originalWords.mkString(" ")), "guess" -> Seq(service3.guess.toString), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq(""+service3.depth))).flatMap { r1 =>
           val a = if (locale3.isDefined) r1.json
           else {
             locale3 = Some((r1.json \ "locale").as[String])
