@@ -167,17 +167,31 @@ object Application extends Controller {
                 val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
                 if (service3.queryModifyingEveryPart)
                   ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
-                if (service3.queryModifyingOnlyLastPart)
-                  ret.lastPartBaseformed = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString) :+ ((wordParts.last \ "lemma").as[String])).mkString)
+                if (service3.queryModifyingOnlyLastPart) {
+                  val segments = wordParts.dropRight(1).map(o => {
+                    val segments = (o \\ "SEGMENT")
+                    if (!segments.isEmpty)
+                      segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
+                      else (o \ "lemma").as[String] 
+                  })
+                  ret.lastPartBaseformed = Some((segments :+ ((wordParts.last \ "lemma").as[String])).mkString)
+                }
                 if (service3.queryModifyingEveryPart)
                   ret.completelyInflected = Some(wordParts.map{o =>
                       val inf = (o \\ "INFLECTED").map(_.as[Seq[String]]).flatten
                       if (!inf.isEmpty) inf(0) else (o \ "lemma").as[String]}.mkString)
-                if (service3.queryModifyingOnlyLastPart)
-                  ret.lastPartInflected = Some((wordParts.dropRight(1).map(o => (o \\ "SEGMENT").map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString) :+ ({
+                if (service3.queryModifyingOnlyLastPart) {
+                  val segments = wordParts.dropRight(1).map(o => {
+                    val segments = (o \\ "SEGMENT")
+                    if (!segments.isEmpty)
+                      segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
+                      else (o \ "lemma").as[String] 
+                  })
+                  ret.lastPartInflected = Some((segments :+ ({
                     val inf = (wordParts.last \\ "INFLECTED").map(_.as[Seq[String]]).flatten
                     if (!inf.isEmpty) inf(0) else (wordParts.last \ "lemma").as[String]
                   })).mkString)
+                }
               } else {
                 if (service3.queryModifyingEveryPart) {
                   ret.completelyBaseformed = Some(originalWord._1)
