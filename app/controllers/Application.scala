@@ -46,6 +46,7 @@ object Application extends Controller {
                        val queryModifyingOnlyLastPart: Boolean,
                        val queryUsingAllPermutations: Boolean,
                        val negativeLASFilters: Option[Map[String, Set[String]]],
+                       val strongNegativeLASFilters: Option[Map[String, Set[String]]],
                        val positiveLASFilters: Option[Map[String, Set[String]]],
                        val guess: Boolean,
                        val query: String,
@@ -64,6 +65,7 @@ object Application extends Controller {
       "queryModifyingOnlyLastPart" -> queryModifyingOnlyLastPart,
       "queryUsingAllPermutations" -> queryUsingAllPermutations,
       "negativeLASFilters" -> negativeLASFilters,
+      "strongNegativeLASFilters" -> strongNegativeLASFilters,
       "positiveLASFilters" -> positiveLASFilters,
       "guess" -> guess,
       "query" -> query,
@@ -84,6 +86,7 @@ object Application extends Controller {
     (json \ "queryModifyingOnlyLastPart").asOpt[Boolean].getOrElse(false),
     (json \ "queryUsingAllPermutations").asOpt[Boolean].getOrElse(false),
     (json \ "negativeLASFilters").asOpt[Map[String, Set[String]]],
+    (json \ "strongNegativeLASFilters").asOpt[Map[String, Set[String]]],
     (json \ "positiveLASFilters").asOpt[Map[String, Set[String]]],
     (json \ "guess").asOpt[Boolean].getOrElse(false),
     (json \ "query").asOpt[String].getOrElse(throw new Exception("query")),
@@ -149,14 +152,20 @@ object Application extends Controller {
           var wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
             var analysis = (o \ "analysis").as[Seq[JsObject]]
             var fanalysis = analysis.filter(o => (o \ "globalTags" \ "BEST_MATCH").as[Option[Seq[String]]].isDefined)
-            ((o \ "word").as[String],(if (!fanalysis.isEmpty) fanalysis else analysis).apply(0))
+            ((o \ "word").as[String],((if (!fanalysis.isEmpty) fanalysis else analysis).apply(0),analysis))
           }.toMap
           val analyses = originalWordsPlusSeparators.map { originalWord =>
               val ret = new Analysis(originalWord._1,originalWord._2)
               if (wordsAndAnalyses.contains(originalWord._1)) {
-                val wordAnalysis = wordsAndAnalyses(originalWord._1)
-                if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined) {
+                val wordAnalysis = wordsAndAnalyses(originalWord._1)._1
+                if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined || service3.strongNegativeLASFilters.isDefined) {
                   val tags = (wordAnalysis \\ "tags").map(_.as[Map[String, Seq[String]]]).flatten.toMap
+                  val allTags = wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.toMap
+                  if (service3.strongNegativeLASFilters.isDefined && !allTags.forall {
+                    case (key, vals) =>
+                      val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
+                      vals.forall(v => !nfilters.exists(v.startsWith(_)))
+                  }) ret.allowed = false
                   if (service3.negativeLASFilters.isDefined && !tags.forall {
                     case (key, vals) =>
                       val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
@@ -211,15 +220,17 @@ object Application extends Controller {
         }
         transformedWordsFuture.map { words =>
           val ngrams = new HashSet[String]
+          val originalNGrams = new HashSet[String]
           val ngramOriginalMap = new HashMap[String, HashSet[String]]
           var lastInflected: Seq[String] = Seq.empty
           var lastBaseformed: Seq[String] = Seq.empty
           var lastOriginal: Seq[String] = Seq.empty
           var lastAllowed: Seq[Boolean] = Seq.empty
           for (word <- words) {
+            var t = (lastOriginal :+ word.original).takeRight(service3.maxNGrams) 
+            for (i <- 1 to t.length) originalNGrams += FmtUtils.stringForString(t.takeRight(i).mkString(""))
             lastAllowed = (lastAllowed :+ word.allowed).takeRight(service3.maxNGrams)
             if (word.allowed) {
-              var t = (lastOriginal :+ word.original).takeRight(service3.maxNGrams)
               for (i <- 1 to t.length) if (lastAllowed.takeRight(i).forall(b=>b)) {
                 if (service3.queryUsingOriginalForm) {
                   val ngram = t.takeRight(i).mkString("")
@@ -266,7 +277,7 @@ object Application extends Controller {
             else
               Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ngramOriginalMap.toMap.map{case (k,v) => (k,v.toSeq)}))))
           } else {
-            var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
+            var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<ORIGINALNGRAMS>", originalNGrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
             query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
             try {
               val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
