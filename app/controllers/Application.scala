@@ -163,7 +163,7 @@ object Application extends Controller {
                   val allTags = wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.toMap
                   if (service3.strongNegativeLASFilters.isDefined && !allTags.forall {
                     case (key, vals) =>
-                      val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
+                      val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
                       vals.forall(v => !nfilters.exists(v.startsWith(_)))
                   }) ret.allowed = false
                   if (service3.negativeLASFilters.isDefined && !tags.forall {
