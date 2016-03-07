@@ -105,7 +105,7 @@ object Application extends Controller {
     else configuration(service)
   }
 
-  case class Analysis(val original: String, val whitespace : String,var completelyBaseformed: Option[String] = None,
+  case class Analysis(var completelyBaseformed: Option[String] = None,
     var lastPartBaseformed: Option[String] = None,
     var completelyInflected: Option[String] = None,
     var lastPartInflected: Option[String] = None,
@@ -115,6 +115,11 @@ object Application extends Controller {
   def combine[A](a: Seq[A],b: Seq[A]): Seq[Seq[A]] =
     a.zip(b).foldLeft(Seq.empty[Seq[A]]) { (x,s) => if (x.isEmpty) Seq(Seq(s._1),Seq(s._2)) else (for (a<-x) yield Seq(a:+s._1,a:+s._2)).flatten }
 
+  def permutations[A](a: Seq[Seq[A]]): Seq[Seq[A]] =
+    a.foldLeft(Seq(Seq.empty[A])) { 
+      (acc, next) => acc.flatMap { combo => next.map { num => combo :+ num } } 
+    }
+  
   def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String], onlyGenerateCandidates: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
@@ -141,7 +146,7 @@ object Application extends Controller {
         }).filter(!_._1.isEmpty).toSeq
         var aresult : Option[JsValue] = None
         val originalWords = originalWordsPlusSeparators.map(_._1)
-        val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => new Analysis(w._1,w._2)))
+        val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => (w._1,w._2,Seq(new Analysis()))))
         else analyzeWS.post(Map("text" -> Seq(originalWords.mkString(" ")), "guess" -> Seq(service3.guess.toString), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq(""+service3.depth))).flatMap { r1 =>
           val a = if (locale3.isDefined) r1.json
           else {
@@ -152,69 +157,74 @@ object Application extends Controller {
           var wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
             var analysis = (o \ "analysis").as[Seq[JsObject]]
             var fanalysis = analysis.filter(o => (o \ "globalTags" \ "BEST_MATCH").as[Option[Seq[String]]].isDefined)
-            ((o \ "word").as[String],((if (!fanalysis.isEmpty) fanalysis else analysis).apply(0),analysis))
+            ((o \ "word").as[String],((if (!fanalysis.isEmpty) fanalysis else analysis),analysis))
           }.toMap
           val analyses = originalWordsPlusSeparators.map { originalWord =>
-              val ret = new Analysis(originalWord._1,originalWord._2)
-              if (wordsAndAnalyses.contains(originalWord._1)) {
-                val wordAnalysis = wordsAndAnalyses(originalWord._1)._1
-                if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined || service3.strongNegativeLASFilters.isDefined) {
-                  val tags = (wordAnalysis \\ "tags").map(_.as[Map[String, Seq[String]]]).flatten.toMap
-                  val allTags = wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.toMap
-                  if (service3.strongNegativeLASFilters.isDefined && !allTags.forall {
-                    case (key, vals) =>
-                      val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
-                      vals.forall(v => !nfilters.exists(v.startsWith(_)))
-                  }) ret.allowed = false
-                  if (service3.negativeLASFilters.isDefined && !tags.forall {
-                    case (key, vals) =>
-                      val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
-                      vals.forall(v => !nfilters.exists(v.startsWith(_)))
-                  }) ret.allowed = false
-                  if (service3.positiveLASFilters.isDefined && !service3.positiveLASFilters.get.forall {
-                    case (key, vals) =>
-                      tags.isDefinedAt(key) && vals.exists(v => tags(key).contains(v))
-                  }) ret.allowed = false
-                }
-                val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
-                if (service3.queryModifyingEveryPart)
-                  ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
-                if (service3.queryModifyingOnlyLastPart) {
-                  val segments = wordParts.dropRight(1).map(o => {
-                    val segments = (o \\ "SEGMENT")
-                    if (!segments.isEmpty)
-                      segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
-                      else (o \ "lemma").as[String] 
-                  })
-                  ret.lastPartBaseformed = Some((segments :+ ((wordParts.last \ "lemma").as[String])).mkString)
-                }
-                if (service3.queryModifyingEveryPart)
-                  ret.completelyInflected = Some(wordParts.map{o =>
-                      val inf = (o \\ "INFLECTED").map(_.as[Seq[String]]).flatten
-                      if (!inf.isEmpty) inf(0) else (o \ "lemma").as[String]}.mkString)
-                if (service3.queryModifyingOnlyLastPart) {
-                  val segments = wordParts.dropRight(1).map(o => {
-                    val segments = (o \\ "SEGMENT")
-                    if (!segments.isEmpty)
-                      segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
-                      else (o \ "lemma").as[String] 
-                  })
-                  ret.lastPartInflected = Some((segments :+ ({
-                    val inf = (wordParts.last \\ "INFLECTED").map(_.as[Seq[String]]).flatten
-                    if (!inf.isEmpty) inf(0) else (wordParts.last \ "lemma").as[String]
-                  })).mkString)
-                }
-              } else {
-                if (service3.queryModifyingEveryPart) {
-                  ret.completelyBaseformed = Some(originalWord._1)
-                  ret.completelyInflected = Some(originalWord._1)
-                }
-                if (service3.queryModifyingOnlyLastPart) {
-                  ret.lastPartBaseformed = Some(originalWord._1)
-                  ret.lastPartInflected = Some(originalWord._1)
-                }
+            val allTags = new HashMap[String,Seq[String]]
+            wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
+            val allAllowed = !(service3.strongNegativeLASFilters.isDefined && !allTags.forall {
+                  case (key, vals) =>
+                    val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
+                    vals.forall(v => !nfilters.exists(v.startsWith(_)))
+                })
+            val retS = if (wordsAndAnalyses.contains(originalWord._1)) wordsAndAnalyses(originalWord._1)._1.map { wordAnalysis => 
+              val ret = new Analysis()
+              ret.allowed = allAllowed
+              if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined) {
+                val tags = (wordAnalysis \\ "tags").map(_.as[Map[String, Seq[String]]]).flatten.toMap
+                if (service3.negativeLASFilters.isDefined && !tags.forall {
+                  case (key, vals) =>
+                    val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
+                    vals.forall(v => !nfilters.exists(v.startsWith(_)))
+                }) ret.allowed = false
+                if (service3.positiveLASFilters.isDefined && !service3.positiveLASFilters.get.forall {
+                  case (key, vals) =>
+                    tags.isDefinedAt(key) && vals.exists(v => tags(key).contains(v))
+                }) ret.allowed = false
+              }
+              val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
+              if (service3.queryModifyingEveryPart)
+                ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
+              if (service3.queryModifyingOnlyLastPart) {
+                val segments = wordParts.dropRight(1).map(o => {
+                  val segments = (o \\ "SEGMENT")
+                  if (!segments.isEmpty)
+                    segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
+                    else (o \ "lemma").as[String] 
+                })
+                ret.lastPartBaseformed = Some((segments :+ ((wordParts.last \ "lemma").as[String])).mkString)
+              }
+              if (service3.queryModifyingEveryPart)
+                ret.completelyInflected = Some(wordParts.map{o =>
+                    val inf = (o \\ "INFLECTED").map(_.as[Seq[String]]).flatten
+                    if (!inf.isEmpty) inf(0) else (o \ "lemma").as[String]}.mkString)
+              if (service3.queryModifyingOnlyLastPart) {
+                val segments = wordParts.dropRight(1).map(o => {
+                  val segments = (o \\ "SEGMENT")
+                  if (!segments.isEmpty)
+                    segments.map(_.as[Seq[String]]).flatten.filter(_ != "-0").map(_.replaceAllLiterally("»", "").replaceAllLiterally("{WB}","").replaceAllLiterally("{XB}","").replaceAllLiterally("{DB}","").replaceAllLiterally("{MB}","").replaceAllLiterally("{STUB}","").replaceAllLiterally("{hyph?}","")).mkString
+                    else (o \ "lemma").as[String] 
+                })
+                ret.lastPartInflected = Some((segments :+ ({
+                  val inf = (wordParts.last \\ "INFLECTED").map(_.as[Seq[String]]).flatten
+                  if (!inf.isEmpty) inf(0) else (wordParts.last \ "lemma").as[String]
+                })).mkString)
               }
               ret
+            } else {
+              val ret=new Analysis()
+              if (service3.queryModifyingEveryPart) {
+                ret.completelyBaseformed = Some(originalWord._1)
+                ret.completelyInflected = Some(originalWord._1)
+              }
+              if (service3.queryModifyingOnlyLastPart) {
+                ret.lastPartBaseformed = Some(originalWord._1)
+                ret.lastPartInflected = Some(originalWord._1)
+              }
+              if (service3.positiveLASFilters.isDefined) ret.allowed=false
+              Seq(ret)
+            }
+            (originalWord._1,originalWord._2,retS)
           }
           Future.successful(analyses)
         }
@@ -222,54 +232,56 @@ object Application extends Controller {
           val ngrams = new HashSet[String]
           val originalNGrams = new HashSet[String]
           val ngramOriginalMap = new HashMap[String, HashSet[String]]
-          var lastInflected: Seq[String] = Seq.empty
-          var lastBaseformed: Seq[String] = Seq.empty
+          var last: Seq[Seq[Analysis]] = Seq.empty
           var lastOriginal: Seq[String] = Seq.empty
-          var lastAllowed: Seq[Boolean] = Seq.empty
-          for (word <- words) {
-            var t = (lastOriginal :+ word.original).takeRight(service3.maxNGrams) 
-            for (i <- 1 to t.length) originalNGrams += FmtUtils.stringForString(t.takeRight(i).mkString(""))
-            lastAllowed = (lastAllowed :+ word.allowed).takeRight(service3.maxNGrams)
-            if (word.allowed) {
-              for (i <- 1 to t.length) if (lastAllowed.takeRight(i).forall(b=>b)) {
+          var lastWhitespace: Seq[String] = Seq.empty
+          var lastOriginalAllowed: Seq[Boolean] = Seq.empty
+          for (wordPlusAnalysis <- words) {
+            val t = (lastOriginal :+ wordPlusAnalysis._1).takeRight(service3.maxNGrams)
+            lastOriginalAllowed = (lastOriginalAllowed :+ wordPlusAnalysis._3.exists(_.allowed)).takeRight(service3.maxNGrams)
+            last = (last :+ wordPlusAnalysis._3).takeRight(service3.maxNGrams)
+            for (i <- 1 to t.length) {
+              val ngram = t.takeRight(i).mkString("")
+              originalNGrams += FmtUtils.stringForString(ngram)
+              if (lastOriginalAllowed.takeRight(i).forall(b=>b)) {
                 if (service3.queryUsingOriginalForm) {
-                  val ngram = t.takeRight(i).mkString("")
                   ngrams += FmtUtils.stringForString(ngram)
                   ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += ngram
                 }
-                word.lastPartBaseformed.foreach { w =>
-                  val ngram = (lastOriginal :+ w).takeRight(i).mkString("")
-                  ngrams += FmtUtils.stringForString(ngram)
-                  ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
-                }
-                word.lastPartInflected.foreach { w =>
-                  val ngram = (lastOriginal :+ w).takeRight(i).mkString("")
-                  ngrams += FmtUtils.stringForString(ngram)
-                  ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
-                }
-              }
-              word.completelyBaseformed.foreach { word =>
-                var t2 = (lastBaseformed :+ word).takeRight(service3.maxNGrams)
-                for (head <- if (service3.queryUsingAllPermutations) combine(t,t2) else Seq(t2))
-                  for (i <- 1 to head.length) if (lastAllowed.takeRight(i).forall(b=>b)) {
-                    val ngram = head.takeRight(i).mkString("")
+                wordPlusAnalysis._3.filter(_.allowed).foreach{ word => 
+                  word.lastPartBaseformed.foreach { w =>
+                    val ngram = (lastOriginal :+ w).takeRight(i).mkString("")
                     ngrams += FmtUtils.stringForString(ngram)
                     ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
                   }
-              }
-              word.completelyInflected.foreach { word =>
-                var t2 = (lastInflected :+ word).takeRight(service3.maxNGrams)
-                for (head <- if (service3.queryUsingAllPermutations) combine(t,t2) else Seq(t2))
-                  for (i <- 1 to head.length) if (lastAllowed.takeRight(i).forall(b=>b)) {
-                    val ngram = head.takeRight(i).mkString("")
+                  word.lastPartInflected.foreach { w =>
+                    val ngram = (lastOriginal :+ w).takeRight(i).mkString("")
                     ngrams += FmtUtils.stringForString(ngram)
                     ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
                   }
+                }
+              }
+              permutations(last.takeRight(i).map(_.filter(_.allowed))).foreach { analyses =>
+                if (service3.queryUsingBaseform && service3.queryModifyingEveryPart) { 
+                  val banalyses = analyses.map(_.completelyBaseformed.get)
+                  for (words <- if (service3.queryUsingAllPermutations) combine(t,banalyses) else Seq(banalyses)) {
+                    val ngram = words.zip(lastWhitespace.takeRight(i-1) :+ "").map(p=>p._1+p._2).mkString("")
+                    ngrams += FmtUtils.stringForString(ngram)
+                    ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
+                  }
+                }
+                if (!service3.queryUsingInflections.isEmpty && service3.queryModifyingEveryPart) { 
+                  val banalyses = analyses.map(_.completelyInflected.get)
+                  for (words <- if (service3.queryUsingAllPermutations) combine(t,banalyses) else Seq(banalyses)) {
+                    val ngram = words.zip(lastWhitespace.takeRight(i-1) :+ "").map(p=>p._1+p._2).mkString("")
+                    ngrams += FmtUtils.stringForString(ngram)
+                    ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
+                  }
+                }
               }
             }
-            lastOriginal = (lastOriginal :+ (word.original+word.whitespace)).takeRight(service3.maxNGrams)
-            if (word.completelyBaseformed.isDefined) lastBaseformed = (lastBaseformed :+ (word.completelyBaseformed.get+word.whitespace)).takeRight(service3.maxNGrams)
-            if (word.completelyInflected.isDefined) lastInflected = (lastInflected :+ (word.completelyInflected.get+word.whitespace)).takeRight(service3.maxNGrams)
+            lastWhitespace = (lastWhitespace :+ wordPlusAnalysis._2).takeRight(service3.maxNGrams)
+            lastOriginal = (lastOriginal :+ (wordPlusAnalysis._1+wordPlusAnalysis._2)).takeRight(service3.maxNGrams)
           }
           if (onlyGenerateCandidates.isDefined && (onlyGenerateCandidates.get=="" || onlyGenerateCandidates.get.toBoolean)) {
             if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
