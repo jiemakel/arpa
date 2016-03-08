@@ -282,7 +282,7 @@ object Application extends Controller {
                     val ngram = words.zip(lastWhitespace.takeRight(i-1) :+ "").map(p=>p._1+p._2).mkString("")
                     if (originalAllowed && allowed) {
                       ngrams += FmtUtils.stringForString(ngram)
-                      ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += ngram
+                      ngramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
                     }
                     allNgrams += Tuple2(FmtUtils.stringForString(ngram),originalAllowed && allowed)
                     allNgramOriginalMap.getOrElseUpdate(ngram, new HashSet[String]) += t.takeRight(i).mkString("")
@@ -312,7 +312,7 @@ object Application extends Controller {
             else
               Ok(Json.toJson(Map("locale"->JsString(locale3.get),"results"->Json.toJson(ngramOriginalMap.toMap.map{case (k,v) => (k,v.toSeq)}))))
           } else {
-            var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("<NGRAMSPLUSALLOWED>", allNgrams.map(p => "("+p._1+" "+p._2+")").mkString(" ")).replaceAllLiterally("<ORIGINALNGRAMS>", originalNGrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
+            var queryString = service3.query.replaceAllLiterally("<VALUES>", ngrams.mkString(" ")).replaceAllLiterally("(<NGRAMSPLUSALLOWED>)", allNgrams.map(p => "("+p._1+" "+p._2+")").mkString(" ")).replaceAllLiterally("<ORIGINALNGRAMS>", originalNGrams.mkString(" ")).replaceAllLiterally("<LANG>",'"'+locale3.get+'"')
             query2.foreach(q => queryString = queryString.replaceAll("# QUERY", q))
             try {
               val resultSet = QueryExecutionFactory.sparqlService(service3.endpointURL, queryString).execSelect()
