@@ -161,7 +161,7 @@ object Application extends Controller {
           }.toMap
           val analyses = originalWordsPlusSeparators.map { originalWord =>
             val allTags = new HashMap[String,Seq[String]]
-            wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
+            if (wordsAndAnalyses.contains(originalWord._1)) wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
             val allAllowed = !(service3.strongNegativeLASFilters.isDefined && !allTags.forall {
                   case (key, vals) =>
                     val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
