@@ -125,14 +125,18 @@ object Application extends Controller {
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
     else {
       val service3 = service2.get
-      val formBody = request.body.asFormUrlEncoded;
       var query2 = query
       var locale2 = locale
       var text2 = text
-      formBody.foreach { data =>
+      request.body.asFormUrlEncoded.foreach { data =>
         query2 = data.get("query").map(_(0)).orElse(query)
         locale2 = data.get("locale").map(_(0)).orElse(locale)
         text2 = data.get("text").map(_(0)).orElse(text)
+      }
+      request.body.asJson.foreach { data =>
+        query2 = (data \ "query").asOpt[String].orElse(query)
+        locale2 = (data \ "locale").asOpt[String].orElse(locale)
+        text2 = (data \ "text").asOpt[String].orElse(text)
       }
       var locale3 = locale.orElse(service3.lasLocale)
       var lm=0
