@@ -120,6 +120,14 @@ object Application extends Controller {
       (acc, next) => acc.flatMap { combo => next.map { num => combo :+ num } } 
     }
   
+  def isWhitespace(analyses: Seq[JsObject]): Boolean = {
+    if (analyses.forall(o => (o \ "globalTags" \ "WHITESPACE").as[Option[Seq[String]]].isDefined))
+      return true
+    if (analyses.flatMap(o => (o \\ "tags")).map(o => (o \ "UPOS").as[Option[Seq[String]]]).forall(o => o.isDefined && o.get.contains("PUNCT")))
+        return true
+  return false
+  }
+  
   def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String], onlyGenerateCandidates: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
     if (!service2.isDefined) Future.successful(NotFound("Service " + service + " doesn't exist"))
@@ -143,35 +151,42 @@ object Application extends Controller {
       if (!text2.isDefined) Future.successful(BadRequest("No text given"))
       else if (text2.get.isEmpty) Future.successful(BadRequest("Empty text given"))
       else {
-        val originalWordsPlusSeparators = (for (m <- "\\p{P}*(^|\\p{Z}+|$)\\p{P}*".r.findAllMatchIn(text2.get)) yield {
-          val v = ((text2.get.substring(lm,m.start), m.matched))
-          lm=m.end
-          v
-        }).filter(!_._1.isEmpty).toSeq
         var aresult : Option[JsValue] = None
-        val originalWords = originalWordsPlusSeparators.map(_._1)
-        val transformedWordsFuture = if (service3.isSimple && locale3.isDefined || originalWords.isEmpty) Future.successful(originalWordsPlusSeparators.map(w => (w._1,w._2,Seq(new Analysis()))))
-        else analyzeWS.post(Map("text" -> Seq(originalWords.mkString(" ")), "guess" -> Seq(service3.guess.toString), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq(""+service3.depth))).flatMap { r1 =>
+        val transformedWordsFuture = if (service3.isSimple && locale3.isDefined) {
+          val originalWordsPlusSeparators = (for (m <- "\\p{P}*(\\p{Z}+|$)\\p{P}*".r.findAllMatchIn(text2.get)) yield {
+            val v = ((text2.get.substring(lm,m.start), m.matched))
+            lm=m.end
+            v
+          }).filter(!_._1.isEmpty).toSeq
+          Future.successful(originalWordsPlusSeparators.map(w => (w._1,w._2,Seq(new Analysis()))))
+        } else analyzeWS.post(Map("text" -> Seq(text2.get), "guess" -> Seq(service3.guess.toString), "locale" -> locale3.toSeq, "forms" -> service3.queryUsingInflections, "depth" -> Seq(""+service3.depth))).flatMap { r1 =>
           val a = if (locale3.isDefined) r1.json
           else {
             locale3 = Some((r1.json \ "locale").as[String])
             r1.json \ "analysis"
           }
           aresult = Some(a)
-          var wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
+          val wordsAndAnalyses = a.as[Seq[JsObject]].map { o =>
             var analysis = (o \ "analysis").as[Seq[JsObject]]
             var fanalysis = analysis.filter(o => (o \ "globalTags" \ "BEST_MATCH").as[Option[Seq[String]]].isDefined)
             ((o \ "word").as[String],((if (!fanalysis.isEmpty) fanalysis else analysis),analysis))
-          }.toMap
-          val analyses = originalWordsPlusSeparators.map { originalWord =>
+          }
+          val analyses = new ArrayBuffer[(String,String,Seq[Analysis])]
+          var lastWord = null.asInstanceOf[String]
+          var lastAnalysis = null.asInstanceOf[Seq[Analysis]]
+          var whitespace = ""
+          for (wordAndAnalyses <- wordsAndAnalyses) if (isWhitespace(wordAndAnalyses._2._1)) {
+            whitespace += wordAndAnalyses._1
+          } else {
+            if (lastAnalysis!=null) analyses += ((lastWord, whitespace, lastAnalysis))
             val allTags = new HashMap[String,Seq[String]]
-            if (wordsAndAnalyses.contains(originalWord._1)) wordsAndAnalyses(originalWord._1)._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
+            wordAndAnalyses._2._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
             val allAllowed = !(service3.strongNegativeLASFilters.isDefined && !allTags.forall {
                   case (key, vals) =>
                     val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
                     vals.forall(v => !nfilters.exists(v.startsWith(_)))
                 })
-            val retS = if (wordsAndAnalyses.contains(originalWord._1)) wordsAndAnalyses(originalWord._1)._1.map { wordAnalysis => 
+            val retS = wordAndAnalyses._2._1.map { wordAnalysis => 
               val ret = new Analysis()
               ret.allowed = allAllowed
               if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined) {
@@ -215,21 +230,12 @@ object Application extends Controller {
                 })).mkString)
               }
               ret
-            } else {
-              val ret=new Analysis()
-              if (service3.queryModifyingEveryPart) {
-                ret.completelyBaseformed = Some(originalWord._1)
-                ret.completelyInflected = Some(originalWord._1)
-              }
-              if (service3.queryModifyingOnlyLastPart) {
-                ret.lastPartBaseformed = Some(originalWord._1)
-                ret.lastPartInflected = Some(originalWord._1)
-              }
-              if (service3.positiveLASFilters.isDefined) ret.allowed=false
-              Seq(ret)
             }
-            (originalWord._1,originalWord._2,retS)
+            lastAnalysis = retS
+            lastWord = wordAndAnalyses._1
+            whitespace = ""
           }
+          if (lastAnalysis!=null) analyses += ((lastWord, whitespace, lastAnalysis))
           Future.successful(analyses)
         }
         transformedWordsFuture.map { words =>
