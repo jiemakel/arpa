@@ -123,8 +123,8 @@ object Application extends Controller {
   def isWhitespace(analyses: Seq[JsObject]): Boolean = {
     if (analyses.forall(o => (o \ "globalTags" \ "WHITESPACE").as[Option[Seq[String]]].isDefined))
       return true
-    if (analyses.flatMap(o => (o \\ "tags")).map(o => (o \ "UPOS").as[Option[Seq[String]]]).forall(o => o.isDefined && o.get.contains("PUNCT")))
-        return true
+    /*if (analyses.flatMap(o => (o \\ "tags")).map(o => (o \ "UPOS").as[Option[Seq[String]]]).forall(o => o.isDefined && o.get.contains("PUNCT")))
+      return true*/
   return false
   }
   
