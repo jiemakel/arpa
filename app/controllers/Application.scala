@@ -51,7 +51,8 @@ object Application extends Controller {
                        val guess: Boolean,
                        val query: String,
                        val depth: Int,
-                       val maxNGrams: Int) {
+                       val maxNGrams: Int,
+                       val maxNGramsIncludesPunct: Boolean) {
     def isSimple: Boolean = !queryUsingBaseform && queryUsingInflections.isEmpty && !negativeLASFilters.isDefined && !positiveLASFilters.isDefined
 
     def getConfiguration: JsValue = Json.obj(
@@ -70,7 +71,9 @@ object Application extends Controller {
       "guess" -> guess,
       "query" -> query,
       "depth" -> depth,
-      "maxNGrams" -> maxNGrams)
+      "maxNGrams" -> maxNGrams,
+      "maxNGramsIncludesPunct" -> maxNGramsIncludesPunct
+    )
   }
 
   val serviceMap = new HashMap[String, Extractor]
@@ -91,7 +94,8 @@ object Application extends Controller {
     (json \ "guess").asOpt[Boolean].getOrElse(false),
     (json \ "query").asOpt[String].getOrElse(throw new Exception("query")),
     (json \ "depth").asOpt[Int].getOrElse(1),
-    (json \ "maxNGrams").asOpt[Int].getOrElse(throw new Exception("maxNGrams")))
+    (json \ "maxNGrams").asOpt[Int].getOrElse(throw new Exception("maxNGrams")),
+    (json \ "maxNGramsIncludesPunct").asOpt[Boolean].getOrElse(false))
 
   val servicesDir = new File(new SystemProperties().getOrElse("service.directory", "services"))
   servicesDir.mkdir()
@@ -109,7 +113,8 @@ object Application extends Controller {
     var lastPartBaseformed: Option[String] = None,
     var completelyInflected: Option[String] = None,
     var lastPartInflected: Option[String] = None,
-    var allowed: Boolean = true
+    var allowed: Boolean = true,
+    var isPunct: Boolean = false
   )
 
   def combine[A](a: Seq[A],b: Seq[A]): Seq[Seq[A]] =
@@ -125,8 +130,10 @@ object Application extends Controller {
       return true
     /*if (analyses.flatMap(o => (o \\ "tags")).map(o => (o \ "UPOS").as[Option[Seq[String]]]).forall(o => o.isDefined && o.get.contains("PUNCT")))
       return true*/
-  return false
+    return false
   }
+  
+  def isPunct(tags: Map[String, Seq[String]]): Boolean = tags.get("UPOS").exists(poss => poss.contains("SYM") | poss.contains("PUNCT"))
   
   def extract(service: String, text: Option[String], query: Option[String], locale: Option[String], pretty : Option[String], debug : Option[String], onlyGenerateCandidates: Option[String]) = Action.async { implicit request =>
     val service2 = serviceMap.get(service)
@@ -180,7 +187,7 @@ object Application extends Controller {
           } else {
             if (lastAnalysis!=null) analyses += ((lastWord, whitespace, lastAnalysis))
             val allTags = new HashMap[String,Seq[String]]
-            wordAndAnalyses._2._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) } 
+            wordAndAnalyses._2._2.map(o => (o \\ "tags")).flatten.map(_.as[Map[String, Seq[String]]]).flatten.foreach { case (k,v) => allTags.put(k,allTags.getOrElse(k,Seq.empty) ++ v) }
             val allAllowed = !(service3.strongNegativeLASFilters.isDefined && !allTags.forall {
                   case (key, vals) =>
                     val nfilters = service3.strongNegativeLASFilters.get.getOrElse(key, Set.empty)
@@ -188,19 +195,18 @@ object Application extends Controller {
                 })
             val retS = wordAndAnalyses._2._1.map { wordAnalysis => 
               val ret = new Analysis()
+              val tags = (wordAnalysis \\ "tags").map(_.as[Map[String, Seq[String]]]).flatten.toMap
+              ret.isPunct = isPunct(tags)
               ret.allowed = allAllowed
-              if (service3.positiveLASFilters.isDefined || service3.negativeLASFilters.isDefined) {
-                val tags = (wordAnalysis \\ "tags").map(_.as[Map[String, Seq[String]]]).flatten.toMap
-                if (service3.negativeLASFilters.isDefined && !tags.forall {
-                  case (key, vals) =>
-                    val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
-                    vals.forall(v => !nfilters.exists(v.startsWith(_)))
-                }) ret.allowed = false
-                if (service3.positiveLASFilters.isDefined && !service3.positiveLASFilters.get.forall {
-                  case (key, vals) =>
-                    tags.isDefinedAt(key) && vals.exists(v => tags(key).contains(v))
-                }) ret.allowed = false
-              }
+              if (service3.negativeLASFilters.isDefined && !tags.forall {
+                case (key, vals) =>
+                  val nfilters = service3.negativeLASFilters.get.getOrElse(key, Set.empty)
+                  vals.forall(v => !nfilters.exists(v.startsWith(_)))
+              }) ret.allowed = false
+              if (service3.positiveLASFilters.isDefined && !service3.positiveLASFilters.get.forall {
+                case (key, vals) =>
+                  tags.isDefinedAt(key) && vals.exists(v => tags(key).contains(v))
+              }) ret.allowed = false
               val wordParts = (wordAnalysis \ "wordParts").as[Seq[JsObject]]
               if (service3.queryModifyingEveryPart)
                 ret.completelyBaseformed = Some(wordParts.map(o => (o \ "lemma").as[String]).mkString)
@@ -249,9 +255,19 @@ object Application extends Controller {
           var lastWhitespace: Seq[String] = Seq.empty
           var lastOriginalAllowed: Seq[Boolean] = Seq.empty
           for (wordPlusAnalysis <- words) {
-            val t = (lastOriginal :+ wordPlusAnalysis._1).takeRight(service3.maxNGrams)
-            lastOriginalAllowed = (lastOriginalAllowed :+ wordPlusAnalysis._3.exists(_.allowed)).takeRight(service3.maxNGrams)
-            last = (last :+ wordPlusAnalysis._3).takeRight(service3.maxNGrams)
+            last = (last :+ wordPlusAnalysis._3)
+            val takeNGrams = if (service3.maxNGramsIncludesPunct) service3.maxNGrams else {
+              var takeNGrams = service3.maxNGrams - 1
+              var realNGrams = 0
+              do {
+                takeNGrams += 1
+                realNGrams = last.takeRight(takeNGrams).filter(!_.exists(_.isPunct)).length
+              } while (realNGrams < service3.maxNGrams && takeNGrams < last.length)
+              takeNGrams
+            }
+            last = last.takeRight(takeNGrams)
+            val t = (lastOriginal :+ wordPlusAnalysis._1).takeRight(takeNGrams)
+            lastOriginalAllowed = (lastOriginalAllowed :+ wordPlusAnalysis._3.exists(_.allowed)).takeRight(takeNGrams)
             for (i <- 1 to t.length) {
               val ngram = t.takeRight(i).mkString("")
               originalNGrams += FmtUtils.stringForString(ngram)
@@ -313,8 +329,8 @@ object Application extends Controller {
                 }
               }
             }
-            lastWhitespace = (lastWhitespace :+ wordPlusAnalysis._2).takeRight(service3.maxNGrams)
-            lastOriginal = (lastOriginal :+ (wordPlusAnalysis._1+wordPlusAnalysis._2)).takeRight(service3.maxNGrams)
+            lastWhitespace = (lastWhitespace :+ wordPlusAnalysis._2).takeRight(takeNGrams)
+            lastOriginal = (lastOriginal :+ (wordPlusAnalysis._1+wordPlusAnalysis._2)).takeRight(takeNGrams)
           }
           if (onlyGenerateCandidates.isDefined && (onlyGenerateCandidates.get=="" || onlyGenerateCandidates.get.toBoolean)) {
             if (pretty.isDefined && (pretty.get=="" || pretty.get.toBoolean))
