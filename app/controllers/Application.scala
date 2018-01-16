@@ -31,9 +31,7 @@ import org.apache.jena.atlas.web.HttpException
 
 object Application extends Controller {
 
-  val servicePrefix = new SystemProperties().getOrElse("service.prefix", "http://demo.seco.tkk.fi/arpa/")
-
-  val analyzeWS = WS.url(new SystemProperties().getOrElse("analyze.address", "http://demo.seco.tkk.fi/las/analyze"))
+  val analyzeWS = WS.url(Option(System.getProperty("analyze.address")).orElse(sys.env.get("ANALYZE_ADDRESS")).getOrElse("http://demo.seco.tkk.fi/las/analyze"))
 
   case class Extractor(id: String,
                        val name: String,
