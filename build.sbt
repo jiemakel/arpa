@@ -22,11 +22,20 @@ publishArtifact in (Compile, packageDoc) := false
 
 dockerBaseImage := "openjdk:alpine"
 
-dockerExposedPorts in Docker := Seq(9000, 9443)
+dockerExposedPorts := Seq(9000, 9443)
 
 dockerExposedVolumes := Seq("/opt/docker/logs","/opt/docker/services")
 
 dockerUsername := Some("jiemakel")
+
+daemonUser in Docker := "1001"
+
+import com.typesafe.sbt.packager.docker._
+
+dockerCommands := dockerCommands.value.flatMap {
+  case ExecCmd("RUN", args @ _*) if args.contains("chown") => Seq(ExecCmd("RUN", "chgrp", "-R", "0", "/opt"),ExecCmd("RUN", "chmod", "-R", "g=u", "/opt"))
+  case cmd => Seq(cmd) 
+}
 
 libraryDependencies ++= Seq(
 	"org.apache.jena" % "jena-arq" % "2.12.1",
